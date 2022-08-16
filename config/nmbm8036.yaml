@@ -1,0 +1,253 @@
+substitutions:
+  devicename: nmbm8036
+  upper_devicename: "NbmM8036 Controler"
+  low_devicename: nmbm8036
+
+external_components:
+  - source:
+      #type: git
+      #url: https://github.com/Brokly/nmbm8036_component
+      type: local
+      path: my_components     
+    components: [ nmbm8036 ]
+    refresh: 0s
+
+esphome:
+  name: $devicename
+  includes:
+    - my_components/nmbm8036/nmbm8036.h
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_pass
+  manual_ip:
+    static_ip: !secret ip_nmbm8036
+    gateway: !secret gateway 
+    subnet: !secret subnet
+    dns1: !secret dns1
+    dns2: !secret dns2
+  ap:
+    ssid:  ${upper_devicename} Hotspot
+    password: !secret ap_wifi_pass
+
+logger:
+    level: DEBUG
+    #baud_rate: 0
+    
+api:
+
+ota:
+  password: !secret ota_pass
+
+captive_portal:
+    
+web_server:
+  port: 80
+  auth:
+    username: !secret web_user
+    password: !secret web_pass
+
+#последовательный порт ВНИМАНИЕ СПЕЦИФИЧЕСКАЯ НАСТРОЙКА
+uart:
+  id: uart_bus
+  tx_pin: GPIO14
+  rx_pin: GPIO27
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 2 
+  
+binary_sensor:
+  # кнопка
+  - platform: gpio
+    pin:
+      number: GPIO32
+    name: $upper_devicename Button
+    on_press:
+      - switch.toggle: ${low_devicename}_relay
+output:
+  ## https://esphomelib.com/esphomeyaml/components/output/esp8266_pwm.html
+  ## create a PWM pin to control
+  - platform: ledc
+    id: ${low_devicename}_red_led
+    pin:
+      number: GPIO4
+      inverted: False
+
+light:
+  ## https://esphomelib.com/esphomeyaml/components/light/monochromatic.html
+  ## attach a monochrome light to the PWM pin
+  - platform: monochromatic
+    # name: $upper_devicename Green LED" # uncomment to expose the led as a light with brightness control
+    output: ${low_devicename}_red_led
+    id: status_led
+    default_transition_length: 1ms # controls the light fade/transition time
+    
+switch:
+  # реле
+  - platform: gpio
+    id: relay
+    pin: GPIO13
+  #виртуальная кнопка, совмещает реле и диод
+  - platform: template
+    name: $upper_devicename Relay
+    optimistic: true
+    id: ${low_devicename}_relay
+    internal: false
+    turn_on_action:
+    - switch.turn_on: relay
+    - light.turn_on: status_led
+    turn_off_action:
+    - switch.turn_off: relay
+    - light.turn_off: status_led
+
+#версия прошивки
+text_sensor:
+  - platform: version
+    name: $upper_devicename ESPHome Version
+
+sensor:
+  #датчик отображающий уровень сигнала Wifi
+  - platform: wifi_signal
+    name: $upper_devicename Signal
+    update_interval: 60s
+  #bm8036 имеет на борту RTC, можно использовать как источник точного времени
+  # nmbm8036.write_time , nmbm8036.read_time
+  - platform: "nmbm8036"
+    name: $upper_devicename
+    id: nmbm8036_id
+    # не забываем подключить uart
+    uart_id: uart_bus
+    # минимальный диапазон публикации сенсоров лучше не делать меньше 5 сек
+    update_interval: 20s
+    # нога на которой висит диод активности обмена с bm8036
+    pin: 
+       number: GPIO16
+    # температурных сенсоров может быть 32
+    temperature_0:
+       name: Solid Fuel Boiler Output
+       id: t0_id
+    temperature_1:
+       name: Outer Surface Chimney
+       id: t1_id
+    temperature_2:
+       name: Solid Fuel Boiler Input
+       id: t2_id
+    temperature_3:
+       name: House Input Pipe
+       id: t3_id
+    temperature_4:
+       name: Ventilation Outlet
+       id: t4_id
+    temperature_5:
+       name: House 1
+       id: t5_id
+    temperature_6:
+       name: House 2
+       id: t6_id
+    temperature_7:
+       name: Electric Boiler Output
+       id: t7_id
+    temperature_8:
+       name: House Output Pipe
+       id: t8_id
+    temperature_9:
+       name: Solid Fuel Boiler Button
+       id: t9_id
+    temperature_10:
+       name: Electric Boiler Button
+       id: t10_id
+    temperature_11:
+       name: Electric Water Boiler
+       id: t11_id
+    # серийные номера температурных сенсоров, может быть 32
+    ds_address_0:
+       name: ${upper_devicename} Dallss SN 0
+       id: sn0_id
+    ds_address_1:
+       name: ${upper_devicename} Dallss SN 1
+       id: sn1_id
+    ds_address_2:
+       name: ${upper_devicename} Dallss SN 2
+       id: sn2_id
+    ds_address_3:
+       name: ${upper_devicename} Dallss SN 3
+       id: sn3_id
+    ds_address_4:
+       name: ${upper_devicename} Dallss SN 4
+       id: sn4_id
+    ds_address_5:
+       name: ${upper_devicename} Dallss SN 5
+       id: sn5_id
+    ds_address_6:
+       name: ${upper_devicename} Dallss SN 6
+       id: sn6_id
+    ds_address_7:
+       name: ${upper_devicename} Dallss SN 7
+       id: sn7_id
+    ds_address_8:
+       name: ${upper_devicename} Dallss SN 8
+       id: sn8_id
+    ds_address_9:
+       name: ${upper_devicename} Dallss SN 9
+       id: sn9_id
+    ds_address_10:
+       name: ${upper_devicename} Dallss SN 10
+       id: sn10_id
+    ds_address_11:
+       name: ${upper_devicename} Dallss SN 11
+       id: sn11_id
+    # внешних выходов - 12
+    output_0:
+       name: Boiler air flap
+       id: out0_id
+    output_1:
+       name: Solid Fuel Boiler Pump
+       id: out1_id
+    output_2:
+       name: Safety Temperature Valve
+       id: out2_id
+    output_3:
+       name: Electric Fuel Boiler Pump
+       id: out3_id
+    output_4:
+       name: 75c Support Valve
+       id: out4_id
+    output_5:
+       name: Small Сircle Valve
+       id: out5_id
+    output_6:
+       name: Water Boiler Pump
+       id: out6_id
+    output_7:
+       name: Electric Boiler
+       id: out7_id
+    # напряжение батарейки RTC
+    rtc_battery_voltage:
+       name: ${upper_devicename} RTC Battery Voltage
+       id: batt_id
+    # статус связи с bm8036
+    connect_status:
+       name: ${upper_devicename} Uart Link Status
+       id: err_id
+    # версия прошивки bm8036
+    firmware_version:
+       name: ${upper_devicename} Firmware Version
+       id: firm_id
+    
+time:
+  # синхронизация времени на NM8036
+  - platform: sntp
+    id: cycle
+    on_time:
+      # Every 5 minutes
+     - seconds: 0
+       minutes: /15
+       then:
+         nmbm8036.write_time:
+            id: nmbm8036_id
