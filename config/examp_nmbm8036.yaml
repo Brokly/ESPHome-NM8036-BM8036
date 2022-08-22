@@ -1,17 +1,19 @@
 substitutions:
   devicename: nmbm8036
-  upper_devicename: "NnBm8036 Controler"
+  upper_devicename: "NbmM8036 Controler"
   low_devicename: nmbm8036
 
 external_components:
   - source:
       type: git
-      url: https://github.com/Brokly/ESPHome-NM8036-BM8036-/my_components/nmbm8036/
+      url: https://github.com/Brokly/ESPHome-NM8036-BM8036-/tree/main/my_components/nmbm8036
     components: [ nmbm8036 ]
     refresh: 0s
 
 esphome:
   name: $devicename
+  includes:
+    - my_components/nmbm8036/nmbm8036.h
 
 esp32:
   board: esp32dev
@@ -33,7 +35,7 @@ wifi:
 
 logger:
     level: DEBUG
-    baud_rate: 0
+    #baud_rate: 0
     
 api:
 
@@ -58,17 +60,36 @@ uart:
   parity: NONE
   stop_bits: 2 
   
+binary_sensor:
+#статус устройства
+  - platform: status
+    name: ${upper_devicename} Status
+    id: ${low_devicename}_status
+
+light:
+  - platform: status_led
+    name: "Switch state"
+    pin: GPIO16  
+    
+switch:
+#свитч рестарта устройства
+  - platform: restart
+    name: ${upper_devicename} Restart SW
+    id: ${low_devicename}_restart_sw_id
+
 #версия прошивки
 text_sensor:
   - platform: version
     name: $upper_devicename ESPHome Version
 
 sensor:
-  #датчик отображающий уровень сигнала Wifi
+#датчик отображающий уровень сигнала Wifi
   - platform: wifi_signal
     name: $upper_devicename Signal
     update_interval: 60s
-  #bm8036 имеет на борту RTC, можно использовать как источник точного времени
+#время работы устройства после загрузки
+  - platform: uptime
+    name: ${upper_devicename} Uptime Sensor
   - platform: "nmbm8036"
     name: $upper_devicename
     id: nmbm8036_id
@@ -76,108 +97,47 @@ sensor:
     uart_id: uart_bus
     # минимальный диапазон публикации сенсоров лучше не делать меньше 5 сек
     update_interval: 20s
-    # нога на которой висит диод активности обмена с bm8036, если нужен визуальный контроль обмена данными
-    pin: 
+    # нога на которой висит диод активности обмена с bm8036, мигает при удачном чтении данных из устройства
+    active_led_pin: 
        number: GPIO16
-    # температурных сенсоров может быть 32
+    # температурных сенсоров может быть до 31 temperature_0: ... temperature_3:
     temperature_0:
-       name: ${upper_devicename} Termo 0
+       name: Solid Fuel Boiler Output
        id: t0_id
     temperature_1:
-       name: ${upper_devicename} Termo 1
+       name: Outer Surface Chimney
        id: t1_id
     temperature_2:
-       name: ${upper_devicename} Termo 2
+       name: Solid Fuel Boiler Input
        id: t2_id
     temperature_3:
-       name: ${upper_devicename} Termo 3
+       name: House Input Pipe
        id: t3_id
     temperature_4:
-       name: ${upper_devicename} Termo 4
+       name: Ventilation Outlet
        id: t4_id
     temperature_5:
-       name: ${upper_devicename} Termo 5
+       name: House 1
        id: t5_id
     temperature_6:
-       name: ${upper_devicename} Termo 6
+       name: House 2
        id: t6_id
     temperature_7:
-       name: ${upper_devicename} Termo 7
+       name: Electric Boiler Output
        id: t7_id
     temperature_8:
-       name: ${upper_devicename} Termo 8
+       name: House Output Pipe
        id: t8_id
     temperature_9:
-       name: ${upper_devicename} Termo 9
+       name: Solid Fuel Boiler Button
        id: t9_id
     temperature_10:
-       name: ${upper_devicename} Termo 10
+       name: Electric Boiler Button
        id: t10_id
     temperature_11:
-       name: ${upper_devicename} Termo 11
+       name: Electric Water Boiler
        id: t11_id
-    temperature_12:
-       name: ${upper_devicename} Termo 12
-       id: t12_id
-    temperature_13:
-       name: ${upper_devicename} Termo 13
-       id: t13_id
-    temperature_14:
-       name: ${upper_devicename} Termo 14
-       id: t14_id
-    temperature_15:
-       name: ${upper_devicename} Termo 15
-       id: t15_id
-    temperature_16:
-       name: ${upper_devicename} Termo 16
-       id: t16_id
-    temperature_17:
-       name: ${upper_devicename} Termo 17
-       id: t17_id
-    temperature_18:
-       name: ${upper_devicename} Termo 18
-       id: t18_id
-    temperature_19:
-       name: ${upper_devicename} Termo 19
-       id: t19_id
-    temperature_20:
-       name: ${upper_devicename} Termo 20
-       id: t20_id
-    temperature_21:
-       name: ${upper_devicename} Termo 21
-       id: t21_id
-    temperature_22:
-       name: ${upper_devicename} Termo 22
-       id: t22_id
-    temperature_23:
-       name: ${upper_devicename} Termo 23
-       id: t23_id
-    temperature_24:
-       name: ${upper_devicename} Termo 24
-       id: t24_id
-    temperature_25:
-       name: ${upper_devicename} Termo 25
-       id: t25_id
-    temperature_26:
-       name: ${upper_devicename} Termo 26
-       id: t26_id
-    temperature_27:
-       name: ${upper_devicename} Termo 27
-       id: t27_id
-    temperature_28:
-       name: ${upper_devicename} Termo 28
-       id: t28_id
-    temperature_29:
-       name: ${upper_devicename} Termo 29
-       id: t29_id
-    temperature_30:
-       name: ${upper_devicename} Termo 30
-       id: t30_id
-    temperature_31:
-       name: ${upper_devicename} Termo 31
-       id: t31_id
-       
-    # серийные номера температурных сенсоров, может быть 32
+    # серийные номера температурных сенсоров, может быть до 31 ds_address_0: ... ds_address_31:
     ds_address_0:
        name: ${upper_devicename} Dallss SN 0
        id: sn0_id
@@ -214,111 +174,31 @@ sensor:
     ds_address_11:
        name: ${upper_devicename} Dallss SN 11
        id: sn11_id
-    ds_address_12:
-       name: ${upper_devicename} Dallss SN 12
-       id: sn12_id
-    ds_address_13:
-       name: ${upper_devicename} Dallss SN 13
-       id: sn13_id
-    ds_address_14:
-       name: ${upper_devicename} Dallss SN 14
-       id: sn4_id
-    ds_address_15:
-       name: ${upper_devicename} Dallss SN 15
-       id: sn15_id
-    ds_address_16:
-       name: ${upper_devicename} Dallss SN 16
-       id: sn16_id
-    ds_address_17:
-       name: ${upper_devicename} Dallss SN 17
-       id: sn17_id
-    ds_address_18:
-       name: ${upper_devicename} Dallss SN 18
-       id: sn18_id
-    ds_address_19:
-       name: ${upper_devicename} Dallss SN 19
-       id: sn19_id
-    ds_address_0:
-       name: ${upper_devicename} Dallss SN 20
-       id: sn20_id
-    ds_address_1:
-       name: ${upper_devicename} Dallss SN 21
-       id: sn21_id
-    ds_address_22:
-       name: ${upper_devicename} Dallss SN 22
-       id: sn22_id
-    ds_address_23:
-       name: ${upper_devicename} Dallss SN 23
-       id: sn23_id
-    ds_address_24:
-       name: ${upper_devicename} Dallss SN 24
-       id: sn24_id
-    ds_address_25:
-       name: ${upper_devicename} Dallss SN 25
-       id: sn25_id
-    ds_address_26:
-       name: ${upper_devicename} Dallss SN 26
-       id: sn26_id
-    ds_address_27:
-       name: ${upper_devicename} Dallss SN 27
-       id: sn27_id
-    ds_address_28:
-       name: ${upper_devicename} Dallss SN 28
-       id: sn28_id
-    ds_address_29:
-       name: ${upper_devicename} Dallss SN 29
-       id: sn29_id
-    ds_address_30:
-       name: ${upper_devicename} Dallss SN 30
-       id: sn30_id
-    ds_address_31:
-       name: ${upper_devicename} Dallss SN 31
-       id: sn31_id
-
-    # внешних выходов - 12
+    # внешних выходов - максимум до 11 output_0: ... output_11:
     output_0:
-       name: ${upper_devicename} Output 0
+       name: Boiler air flap
        id: out0_id
     output_1:
-       name: ${upper_devicename} Output 1
+       name: Solid Fuel Boiler Pump
        id: out1_id
     output_2:
-       name: ${upper_devicename} Output 2
+       name: Safety Temperature Valve
        id: out2_id
     output_3:
-       name: ${upper_devicename} Output 3
+       name: Electric Fuel Boiler Pump
        id: out3_id
     output_4:
-       name: ${upper_devicename} Output 4
+       name: 75c Support Valve
        id: out4_id
     output_5:
-       name: ${upper_devicename} Output 5
+       name: Small Сircle Valve
        id: out5_id
     output_6:
-       name: ${upper_devicename} Output 6
+       name: Water Boiler Pump
        id: out6_id
     output_7:
-       name: ${upper_devicename} Output 7
+       name: Electric Boiler
        id: out7_id
-    output_8:
-       name: ${upper_devicename} Output 8
-       id: out8_id
-    output_9:
-       name: ${upper_devicename} Output 9
-       id: out9_id
-    output_10:
-       name: ${upper_devicename} Output 10
-       id: out10_id
-    output_11:
-       name: ${upper_devicename} Output 11
-       id: out11_id
-    # АЦП 4 канала
-    input_0:
-       name: ${upper_devicename} In ADC 0
-       id: in0_id
-    input_1:
-       name: ${upper_devicename} In ADC 1
-       id: in1_id
     # напряжение батарейки RTC
     rtc_battery_voltage:
        name: ${upper_devicename} RTC Battery Voltage
@@ -333,13 +213,16 @@ sensor:
        id: firm_id
     
 time:
-  # синхронизация времени на NM8036
+#bm8036 имеет на борту RTC, можно использовать как источник точного времени
+# nmbm8036.write_time , nmbm8036.read_time
+# синхронизация времени на NM8036
   - platform: sntp
     id: cycle
     on_time:
       # Every 5 minutes
      - seconds: 0
-       minutes: /15
+       minutes: 0
+       hours: 11
        then:
          nmbm8036.write_time:
             id: nmbm8036_id

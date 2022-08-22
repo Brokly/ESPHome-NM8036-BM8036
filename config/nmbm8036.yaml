@@ -63,7 +63,11 @@ uart:
   stop_bits: 2 
   
 binary_sensor:
-  # кнопка
+#статус устройства
+  - platform: status
+    name: ${upper_devicename} Status
+    id: ${low_devicename}_status
+# кнопка
   - platform: gpio
     pin:
       number: GPIO32
@@ -85,10 +89,17 @@ light:
   - platform: monochromatic
     # name: $upper_devicename Green LED" # uncomment to expose the led as a light with brightness control
     output: ${low_devicename}_red_led
-    id: status_led
+    id: stat_led_id
     default_transition_length: 1ms # controls the light fade/transition time
+  - platform: status_led
+    name: "Switch state"
+    pin: GPIO16  
     
 switch:
+#свитч рестарта устройства
+  - platform: restart
+    name: ${upper_devicename} Restart SW
+    id: ${low_devicename}_restart_sw_id
   # реле
   - platform: gpio
     id: relay
@@ -101,10 +112,10 @@ switch:
     internal: false
     turn_on_action:
     - switch.turn_on: relay
-    - light.turn_on: status_led
+    - light.turn_on: stat_led_id
     turn_off_action:
     - switch.turn_off: relay
-    - light.turn_off: status_led
+    - light.turn_off: stat_led_id
 
 #версия прошивки
 text_sensor:
@@ -116,6 +127,9 @@ sensor:
   - platform: wifi_signal
     name: $upper_devicename Signal
     update_interval: 60s
+#время работы устройства после загрузки
+  - platform: uptime
+    name: ${upper_devicename} Uptime Sensor
   #bm8036 имеет на борту RTC, можно использовать как источник точного времени
   # nmbm8036.write_time , nmbm8036.read_time
   - platform: "nmbm8036"
@@ -126,7 +140,7 @@ sensor:
     # минимальный диапазон публикации сенсоров лучше не делать меньше 5 сек
     update_interval: 20s
     # нога на которой висит диод активности обмена с bm8036
-    pin: 
+    active_led_pin: 
        number: GPIO16
     # температурных сенсоров может быть 32
     temperature_0:
@@ -247,7 +261,8 @@ time:
     on_time:
       # Every 5 minutes
      - seconds: 0
-       minutes: /15
+       minutes: 0
+       hours: 11
        then:
          nmbm8036.write_time:
             id: nmbm8036_id
