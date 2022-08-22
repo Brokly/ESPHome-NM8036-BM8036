@@ -120,7 +120,7 @@ enum _errType:uint8_t { _OK=0,        // ошибок нет
 
 #define IN_BUFF_SIZE 512      // размер входного буфера
 #define OUT_BUFF_SIZE 32      // размер выходного буфера
-#define REPLY_TIMEOUT 60000   //mS максимальный таймаут ожидания начала ответа от NM8036 
+#define REPLY_TIMEOUT 5000    //mS максимальный таймаут ожидания начала ответа от NM8036 
 #define IN_BYTE_TIMEOUT 60    //mS максимальный таймаут между ожиданием байтов при ответе от NM8036 
 #define OUT_DELAY  2000       //mS пауза между запросами отправки команд к NM8036
 #define MAX_UPDATE_TIME 250   //mS максимальная продолжительность задержки в update()
@@ -278,7 +278,6 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     void set_pin(GPIOPin  *pin = nullptr){ signal_led=pin; signal_led->setup();}  
     // приоритет потока      
     float get_setup_priority() const override { return esphome::setup_priority::LATE;}
-      
     // вывод в дебаг текущей конфигурации компонента
     void dump_config() {
         ESP_LOGCONFIG(TAG, "NM/BN8036:");
@@ -332,6 +331,13 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     void setup() override{
         // хочу мощный сигнал
         //esp_wifi_set_max_tx_power(80);
+        // что бы зарядить страйпы у МАХ3232 (дерьмовая микросхема)
+        //uint8_t d='V';
+        //for(uint16_t i=0; i<250; i++){
+        //    if(my_serial!=nullptr){
+        //       my_serial->write_array(&d,1); // отправляем байт
+        //    }
+        //}       
     }
     
     // берем время из BM8036
@@ -373,14 +379,16 @@ class NMBM8036 : public Sensor, public RealTimeClock {
             // обработка приема данных 
             if(my_serial->available()){  // если в буфере приема UART есть данные
                 set_pin_state(true); // включить светодиод
-                my_serial->read_byte(&(in_data[in_size++])); // получили байт от устройства - кладем в буфер
+                while(my_serial->available()){
+                   my_serial->read_byte(&(in_data[in_size++])); // получили байт от устройства - кладем в буфер
+                   //_debugMsg(F("%010u: R: %02X"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis(),in_data[in_size-1]);              
+                   if(in_size>=IN_BUFF_SIZE){ // во избежаниии переполнения буфера
+                       in_size=IN_BUFF_SIZE-1;    
+                   }
+                }
                 in_last_time=millis(); // засекли время прихода байта
                 in_timeout=IN_BYTE_TIMEOUT; //время ожидания между байтами
-                //_debugMsg(F("%010u: R: %02X"), ESPHOME_LOG_LEVEL_ERROR, __LINE__,millis(),in_data[in_size-1]);              
                 out_last_time=in_last_time; // перезасекаем таймер отправки пакета
-                if(in_size>=IN_BUFF_SIZE){ // во избежаниии переполнения буфера
-                    in_size=IN_BUFF_SIZE-1;    
-                }
             } else {
                 set_pin_state(false); // вЫключить светодиод
             }
@@ -698,10 +706,8 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                 }
                 if(oldError==_OK){
                     _debugMsg(F("%010u: No errors !"), ESPHOME_LOG_LEVEL_INFO, __LINE__, millis());
-                    set_pin_state(false); // вЫключить светодиод
                 } else {
                     _debugMsg(F("%010u: Error: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), getStrError(oldError));
-                    set_pin_state(true); // включить светодиод
                 }
             }
             if(millis()-start_update_time>=MAX_UPDATE_TIME){ // если сидим долго в этой подпрограмме - пока закончим

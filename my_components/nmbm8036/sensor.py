@@ -1,4 +1,4 @@
-#import logging
+﻿#import logging
 import esphome.config_validation as cv
 import esphome.codegen as cg
 from esphome import automation, pins
@@ -37,7 +37,7 @@ CONF_FIRM_VERSION = "firmware_version"
 ICON_FIRM_VERSION = "mdi:select-inverse"
 CONF_CONNECT_STATUS = "connect_status"
 ICON_CONNECT_STATUS = "mdi:lan-disconnect"
-CONF_SIGNAL_LED_PIN = "signal_led_pin"
+CONF_ACTIVE_LED_PIN = "active_led_pin"
 
 nmbm8036_ns = cg.esphome_ns.namespace("nmbm8036")
 NMBM8036 = nmbm8036_ns.class_("NMBM8036", time.RealTimeClock)
@@ -67,7 +67,7 @@ initParams = {
         icon=ICON_CONNECT_STATUS,
      ),
      # нога светодиода индикации связи
-     cv.Optional(CONF_PIN): pins.gpio_output_pin_schema,
+     cv.Optional(CONF_ACTIVE_LED_PIN ): pins.gpio_output_pin_schema,
 }
 # adding termosensors
 for number in range(32):
@@ -172,7 +172,7 @@ async def to_code(config):
         sens = await text_sensor.new_text_sensor(conf)
         cg.add(var.set_err_sensor(sens))
     #нога светодиода сигнализации
-    if (CONF_PIN) in config:
-        conf=config[CONF_PIN]
+    if (CONF_ACTIVE_LED_PIN ) in config:
+        conf=config[CONF_ACTIVE_LED_PIN ]
         pin = await cg.gpio_pin_expression(conf)
         cg.add(var.set_pin(pin))
