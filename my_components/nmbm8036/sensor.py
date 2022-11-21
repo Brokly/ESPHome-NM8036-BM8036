@@ -2,7 +2,7 @@
 import esphome.config_validation as cv
 import esphome.codegen as cg
 from esphome import automation, pins
-from esphome.components import sensor, uart, time, text_sensor, binary_sensor, output
+from esphome.components import sensor, uart, time, text_sensor, binary_sensor, output, switch
 from esphome.automation import maybe_simple_id
 from esphome.const import (
     CONF_ID,
@@ -16,6 +16,7 @@ from esphome.const import (
     DEVICE_CLASS_VOLTAGE,
     ICON_THERMOMETER,
     UNIT_CELSIUS,
+    CONF_SWITCHES,
 )
 
 #_LOGGER = logging.getLogger(__name__)
@@ -38,11 +39,21 @@ ICON_FIRM_VERSION = "mdi:select-inverse"
 CONF_CONNECT_STATUS = "connect_status"
 ICON_CONNECT_STATUS = "mdi:lan-disconnect"
 CONF_ACTIVE_LED_PIN = "active_led_pin"
+CONF_DISPLAY_1 = "display_1"
+ICON_ALLING_BOTTOM = "mdi:format-align-bottom"
+CONF_DISPLAY_2 = "display_2"
+ICON_ALLING_TOP = "mdi:format-align-top"
+CONF_8036_SWITCH = "switch_"
+ICON_8036_SWITCH = "mdi:toggle-switch-off-outline"
+CONF_INTERSEPTION = "interception"
+ICON_INTERSEPTION = "mdi:transit-connection-variant"
 
 nmbm8036_ns = cg.esphome_ns.namespace("nmbm8036")
 NMBM8036 = nmbm8036_ns.class_("NMBM8036", time.RealTimeClock)
 WriteAction = nmbm8036_ns.class_("WriteAction", automation.Action)
 ReadAction = nmbm8036_ns.class_("ReadAction", automation.Action)
+mn8036_Switch = nmbm8036_ns.class_("mn8036_Switch", switch.Switch, cg.Component)
+check_switch = False
 
 def output_info(config):
 #    _LOGGER.info(config)
@@ -68,6 +79,20 @@ initParams = {
      ),
      # нога светодиода индикации связи
      cv.Optional(CONF_ACTIVE_LED_PIN ): pins.gpio_output_pin_schema,
+     # первая строка дисплея
+     cv.Optional(CONF_DISPLAY_1): text_sensor.text_sensor_schema(
+        icon=ICON_ALLING_BOTTOM,
+     ),
+     # вторая строка дисплея
+     cv.Optional(CONF_DISPLAY_2): text_sensor.text_sensor_schema(
+        icon=ICON_ALLING_TOP,
+     ),
+     # переключатель перехвата управления
+     cv.Optional(CONF_INTERSEPTION): switch.switch_schema(
+        mn8036_Switch,
+        icon=ICON_INTERSEPTION,
+     ),
+
 }
 # adding termosensors
 for number in range(32):
@@ -92,6 +117,12 @@ for number in range(4):
         accuracy_decimals=0,
         state_class=STATE_CLASS_MEASUREMENT,
         icon=ICON_INPUT,
+    )
+#adding switches 
+for number in range(12):
+    initParams[cv.Optional(CONF_8036_SWITCH+str(number))] = switch.switch_schema(
+        mn8036_Switch, 
+        icon=ICON_8036_SWITCH,
     )
     
 CONFIG_SCHEMA = cv.All(sensor.SENSOR_SCHEMA.extend(initParams).extend(time.TIME_SCHEMA).extend(uart.UART_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA), output_info)
@@ -156,6 +187,13 @@ async def to_code(config):
             conf = config[CONF_INPUT+str(number)]
             sens = await sensor.new_sensor(conf)
             cg.add(var.set_adc_sensor(sens,number))
+    # switches
+    for number in range(12):
+        if (CONF_8036_SWITCH+str(number)) in config:
+            check_switch = True
+            conf = config[CONF_8036_SWITCH+str(number)]
+            sw = await switch.new_switch(conf)
+            cg.add(var.set_switches(sw,number))
     # батарейка
     if (CONF_BATTERY) in config:
         conf = config[CONF_BATTERY]
@@ -176,3 +214,27 @@ async def to_code(config):
         conf=config[CONF_ACTIVE_LED_PIN ]
         pin = await cg.gpio_pin_expression(conf)
         cg.add(var.set_pin(pin))
+    # первая строка дисплея
+    if (CONF_DISPLAY_1) in config:
+        conf = config[CONF_DISPLAY_1]
+        sens = await text_sensor.new_text_sensor(conf)
+        cg.add(var.set_disp_str1(sens))
+    # вторая строка дисплея
+    if (CONF_DISPLAY_2) in config:
+        conf = config[CONF_DISPLAY_2]
+        sens = await text_sensor.new_text_sensor(conf)
+        cg.add(var.set_disp_str2(sens))
+    # переключатель перехвата управления
+    if (CONF_INTERSEPTION) in config:
+        if check_switch == True:
+           conf = config[CONF_INTERSEPTION]
+           sw = await switch.new_switch(conf)
+           cg.add(var.set_hook_switches(sw))
+        else:
+           raise cv.Invalid(
+                f"The 'interception' switch cannot be used without one or more 'switch_N'"
+           )
+    elif check_switch == True:
+        raise cv.Invalid(
+            f"To use the 'switch_N', configure the switch 'interception'"
+        )
