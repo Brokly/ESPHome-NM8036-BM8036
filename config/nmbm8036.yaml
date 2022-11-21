@@ -1,12 +1,10 @@
 substitutions:
   devicename: nmbm8036
-  upper_devicename: "NbmM8036 Controler"
-  low_devicename: nmbm8036
-
+  upper_devicename: NbmM8036 Controler
+  location: Электрощит управления ТТ котлом 
+   
 external_components:
   - source:
-      #type: git
-      #url: https://github.com/Brokly/nmbm8036_component
       type: local
       path: my_components     
     components: [ nmbm8036 ]
@@ -16,11 +14,55 @@ esphome:
   name: $devicename
   includes:
     - my_components/nmbm8036/nmbm8036.h
+  on_boot:
+    priority: 600
+    then:
+       # восстановление данных из флеша при загрузке
+       - lambda: |-
+          uint8_t min=id(store_on_time)%60;
+          uint8_t hou=id(store_on_time)/60;
+          {
+             auto call = id(on_minutes).make_call();
+             call.set_value(min);
+             call.perform();
+          }
+          {
+             auto call = id(on_hours).make_call();
+             call.set_value(hou);
+             call.perform();
+          }
+          min=id(store_off_time)%60;
+          hou=id(store_off_time)/60;
+          {
+             auto call = id(off_minutes).make_call();
+             call.set_value(min);
+             call.perform();
+          }
+          {
+             auto call = id(off_hours).make_call();
+             call.set_value(hou);
+             call.perform();
+          }
+          id(hide_notes).publish_state(false);
+          // ВОССТАНОВЛЕНИЕ СОХРАНЕННОЙ ТЕМПЕРАТУРЫ
+          float temp=id(store_temp_manu);
+          if(id(store_auto)){
+             temp=id(store_temp_auto);
+          }
+          auto call = id(termostate).make_call(); // устанавливаем температуру режима авто
+          call.set_target_temperature(temp);
+          call.perform();
+          id(termostate).refresh();
+       - script.execute: script_show_text
+       - script.execute: sync_time
 
 esp32:
   board: esp32dev
   framework:
     type: arduino
+
+preferences:
+  flash_write_interval: 10min
 
 wifi:
   ssid: !secret wifi_ssid
@@ -62,68 +104,169 @@ uart:
   parity: NONE
   stop_bits: 2 
   
+# переменные для сохранения во флеше
+globals:
+  # храним настройку слайдера времени начала нагрева
+  - id: store_on_time
+    type: int
+    restore_value: yes
+    initial_value: '0'  
+  # храним настройку слайдера времени конца нагрева
+  - id: store_off_time
+    type: int
+    restore_value: yes
+    initial_value: '0'  
+  # храним настройку переключателя режима работы по времени или вручную
+  - id: store_auto
+    type: bool
+    restore_value: yes
+    initial_value: '0'  
+  # храним температуру в режиме работы по часам
+  - id: store_temp_auto  
+    type: float
+    restore_value: yes
+    initial_value: '35'  
+  # храним температуру в ручном режиме
+  - id: store_temp_manu 
+    type: float
+    restore_value: yes
+    initial_value: '35'  
+
 binary_sensor:
 #статус устройства
   - platform: status
-    name: ${upper_devicename} Status
-    id: ${low_devicename}_status
+    name: ${upper_devicename} HA Connected
 # кнопка
   - platform: gpio
     pin:
       number: GPIO32
-    name: $upper_devicename Button
-    on_press:
-      - switch.toggle: ${low_devicename}_relay
+    id: button
+    internal: true
+    on_click:
+#работа с реле    
+    - min_length: 10ms
+      max_length: 1000ms
+      then:
+        - switch.toggle: relay_sw
+# restart esp , нужно зажать кнопку на 5000 секунд (ПОСЧИТАТЬ ДО 8)
+    - min_length: 4000ms
+      max_length: 6000ms
+      then:
+        - switch.toggle: restart_sw_id
+
 output:
-  ## https://esphomelib.com/esphomeyaml/components/output/esp8266_pwm.html
-  ## create a PWM pin to control
   - platform: ledc
-    id: ${low_devicename}_red_led
+    id: red_led
     pin:
       number: GPIO4
       inverted: False
 
 light:
-  ## https://esphomelib.com/esphomeyaml/components/light/monochromatic.html
-  ## attach a monochrome light to the PWM pin
   - platform: monochromatic
-    # name: $upper_devicename Green LED" # uncomment to expose the led as a light with brightness control
-    output: ${low_devicename}_red_led
-    id: stat_led_id
-    default_transition_length: 1ms # controls the light fade/transition time
+    output: red_led
+    id: relay_led
+    default_transition_length: 1ms
   - platform: status_led
-    name: "Switch state"
+    id: blue_led
+    internal: true
     pin: GPIO16  
     
 switch:
 #свитч рестарта устройства
   - platform: restart
     name: ${upper_devicename} Restart SW
-    id: ${low_devicename}_restart_sw_id
-  # реле
+    id: restart_sw_id
+# реле
   - platform: gpio
     id: relay
     pin: GPIO13
-  #виртуальная кнопка, совмещает реле и диод
+#виртуальная кнопка, совмещает реле и диод
   - platform: template
+    restore_state: true
     name: $upper_devicename Relay
     optimistic: true
-    id: ${low_devicename}_relay
+    id: relay_sw
     internal: false
     turn_on_action:
-    - switch.turn_on: relay
-    - light.turn_on: stat_led_id
+      - switch.turn_on: relay
+      - light.turn_on: relay_led
     turn_off_action:
-    - switch.turn_off: relay
-    - light.turn_off: stat_led_id
+      - switch.turn_off: relay
+      - light.turn_off: relay_led
+#виртуальная кнопка, переключение режима управления по времени или вручную
+  - platform: template
+    name: $upper_devicename Auto
+    optimistic: true
+    id: sw_auto
+    icon: 'mdi:refresh-auto'
+    turn_on_action:
+      - lambda: |-
+         id(store_auto)=true;
+         auto call = id(termostate).make_call(); // устанавливаем температуру режима авто
+         call.set_target_temperature(id(store_temp_auto));
+         call.perform();
+         id(termostate).refresh();
+      - script.execute: script_turn_auto
+    turn_off_action:
+      - lambda: |-
+         id(store_auto)=false;
+         auto call = id(termostate).make_call(); // устанавливаем температуру ручного режима
+         call.set_target_temperature(id(store_temp_manu));
+         call.perform();
+         id(termostate).refresh();
+      - script.execute: script_turn_auto
+#виртуальная кнопка, для скрытия длинного текста
+  - platform: template
+    name: $upper_devicename Hide Notes
+    optimistic: true
+    id: hide_notes
+    entity_category: config
+    icon: 'mdi:eye-off'
+    turn_on_action:
+      - script.execute: script_hide_text
+    turn_off_action:
+      - script.execute: script_show_text
 
-#версия прошивки
-text_sensor:
-  - platform: version
-    name: $upper_devicename ESPHome Version
+climate:
+  # терморегуляция нагрева электроотопления
+  - platform: thermostat
+    id: termostate
+    name: $upper_devicename Water Termostat
+    sensor: electric_boiler_out
+    min_idle_time: 10sec
+    min_heating_off_time: 10sec
+    min_heating_run_time: 10sec
+    visual:
+      min_temperature: 5
+      max_temperature: 90
+      temperature_step: 1
+    heat_action:
+      - switch.turn_on: interceptor # перехватить управление
+      - switch.turn_on: electric_water_pump # включить циркуляцию воды
+      - delay: 10s
+      - switch.turn_on: electric_water_boiler # включить нагрев
+    idle_action:
+      - switch.turn_on: interceptor # перехватить управление
+      - switch.turn_on: electric_water_pump # включить циркуляцию воды
+      - switch.turn_off: electric_water_boiler # отключить нагрев
+    on_state: 
+      #при отключении термостата, отрубить все и передать управление автономному устройству
+      - lambda: |-
+         if(id(termostate).mode==CLIMATE_MODE_OFF){
+            id(interceptor).turn_off();
+         }
+         if(id(store_auto)){ //если автоматический режим
+            if(id(termostate).target_temperature!=id(store_temp_auto)){ // изменили температуру в авто режиме
+               id(store_temp_auto)=id(termostate).target_temperature; // сохраняем эту температуру
+            }
+         } else {
+            if(id(termostate).target_temperature!=id(store_temp_manu)){ // изменили температуру в ручном режиме
+               id(store_temp_manu)=id(termostate).target_temperature; // сохраняем эту температуру
+            }
+         }
 
 sensor:
-  #датчик отображающий уровень сигнала Wifi
+#датчик отображающий уровень сигнала Wifi
   - platform: wifi_signal
     name: $upper_devicename Signal
     update_interval: 60s
@@ -138,121 +281,170 @@ sensor:
     # не забываем подключить uart
     uart_id: uart_bus
     # минимальный диапазон публикации сенсоров лучше не делать меньше 5 сек
-    update_interval: 20s
+    update_interval: 5s
     # нога на которой висит диод активности обмена с bm8036
     active_led_pin: 
        number: GPIO16
     # температурных сенсоров может быть 32
     temperature_0:
        name: Solid Fuel Boiler Output
-       id: t0_id
     temperature_1:
        name: Outer Surface Chimney
-       id: t1_id
     temperature_2:
        name: Solid Fuel Boiler Input
-       id: t2_id
     temperature_3:
        name: House Input Pipe
-       id: t3_id
     temperature_4:
        name: Ventilation Outlet
-       id: t4_id
     temperature_5:
        name: House 1
-       id: t5_id
     temperature_6:
        name: House 2
-       id: t6_id
     temperature_7:
-       name: Electric Boiler Output
-       id: t7_id
+       name: Electric Boiler Output #выход электрокотла
+       id: electric_boiler_out
     temperature_8:
        name: House Output Pipe
-       id: t8_id
     temperature_9:
        name: Solid Fuel Boiler Button
-       id: t9_id
     temperature_10:
        name: Electric Boiler Button
-       id: t10_id
     temperature_11:
        name: Electric Water Boiler
-       id: t11_id
     # серийные номера температурных сенсоров, может быть 32
     ds_address_0:
        name: ${upper_devicename} Dallss SN 0
-       id: sn0_id
     ds_address_1:
        name: ${upper_devicename} Dallss SN 1
-       id: sn1_id
     ds_address_2:
        name: ${upper_devicename} Dallss SN 2
-       id: sn2_id
     ds_address_3:
        name: ${upper_devicename} Dallss SN 3
-       id: sn3_id
     ds_address_4:
        name: ${upper_devicename} Dallss SN 4
-       id: sn4_id
     ds_address_5:
        name: ${upper_devicename} Dallss SN 5
-       id: sn5_id
     ds_address_6:
        name: ${upper_devicename} Dallss SN 6
-       id: sn6_id
     ds_address_7:
        name: ${upper_devicename} Dallss SN 7
-       id: sn7_id
     ds_address_8:
        name: ${upper_devicename} Dallss SN 8
-       id: sn8_id
     ds_address_9:
        name: ${upper_devicename} Dallss SN 9
-       id: sn9_id
     ds_address_10:
        name: ${upper_devicename} Dallss SN 10
-       id: sn10_id
     ds_address_11:
        name: ${upper_devicename} Dallss SN 11
-       id: sn11_id
     # внешних выходов - 12
     output_0:
        name: Boiler air flap
-       id: out0_id
     output_1:
        name: Solid Fuel Boiler Pump
-       id: out1_id
     output_2:
        name: Safety Temperature Valve
-       id: out2_id
     output_3:
        name: Electric Fuel Boiler Pump
-       id: out3_id
     output_4:
        name: 75c Support Valve
-       id: out4_id
     output_5:
        name: Small Сircle Valve
-       id: out5_id
     output_6:
        name: Water Boiler Pump
-       id: out6_id
     output_7:
        name: Electric Boiler
-       id: out7_id
     # напряжение батарейки RTC
     rtc_battery_voltage:
        name: ${upper_devicename} RTC Battery Voltage
-       id: batt_id
     # статус связи с bm8036
     connect_status:
        name: ${upper_devicename} Uart Link Status
-       id: err_id
     # версия прошивки bm8036
     firmware_version:
        name: ${upper_devicename} Firmware Version
-       id: firm_id
+    # содержание первой строки дисплея
+    display_1:
+       name: ${upper_devicename} Display High Line
+    # содержание второй строки дисплея
+    display_2:
+       name: ${upper_devicename} Display Low Line
+    switch_0:
+       name: ${upper_devicename} SW Boiler air flap
+    switch_1:
+       name: ${upper_devicename} SW Solid Fuel Boiler Pump
+    switch_2:
+       name: ${upper_devicename} SW Safety Temperature Valve
+    switch_3:
+       name: ${upper_devicename} SW Electric Boiler Pump
+       id: electric_water_pump 
+    switch_4:
+       name: ${upper_devicename} SW 75c Support Valve
+    switch_5:
+       name: ${upper_devicename} SW Small Сircle Valve
+    switch_6:
+       name: ${upper_devicename} SW Water Boiler Pump # насос электрического котла
+    switch_7:
+       name: ${upper_devicename} SW Electric Boiler # электро котел
+       id: electric_water_boiler 
+    interception:
+       name: ${upper_devicename} Switch Interceptor
+       id: interceptor #перехват управления в ручное
+
+number: 
+# контролы установки времени включения
+  - platform: template
+    name: $upper_devicename Change On Minutes
+    id: on_minutes
+    optimistic: true
+    mode: box
+    unit_of_measurement: 'm'
+    min_value: 0
+    max_value: 59
+    icon: 'mdi:timer-play-outline'
+    step: 1
+    on_value: 
+      - lambda: |-
+          id(script_set_on_time).execute();
+  - platform: template
+    name: $upper_devicename Change On Hours
+    id: on_hours
+    optimistic: true
+    mode: box
+    unit_of_measurement: 'h'
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: 'mdi:timer-play'
+    on_value: 
+      - lambda: |-
+          id(script_set_on_time).execute();
+# контролы установки времени выключения
+  - platform: template
+    name: $upper_devicename Change Off Minutes
+    id: off_minutes
+    optimistic: true
+    mode: box
+    unit_of_measurement: 'm'
+    min_value: 0
+    max_value: 59
+    step: 1
+    icon: 'mdi:timer-stop-outline'
+    on_value: 
+      - lambda: |-
+          id(script_set_off_time).execute();
+  - platform: template
+    name: $upper_devicename Change Off Hours
+    id: off_hours
+    optimistic: true
+    mode: box
+    unit_of_measurement: 'h'
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: 'mdi:timer-stop'
+    on_value: 
+      - lambda: |-
+          id(script_set_off_time).execute();
     
 time:
   # синхронизация времени на NM8036
@@ -264,5 +456,139 @@ time:
        minutes: 0
        hours: 11
        then:
-         nmbm8036.write_time:
-            id: nmbm8036_id
+         - script.execute: sync_time
+            
+interval:
+  - interval: 30sec
+    then:
+      # каждую минуту проверяем правильность режима работы
+      - script.execute: script_condition
+            
+text_sensor:
+#версия прошивки
+  - platform: version
+    name: $upper_devicename ESPHome Version
+#текстовая форма uptime    
+  - platform: template
+    name: ${upper_devicename} Uptime
+    entity_category: diagnostic
+    icon: 'mdi:timer'
+    lambda: |-
+      uint32_t dur=millis()/1000;
+      char buffer[19];
+      if(dur>=86400) sprintf(buffer,"%ud %uh %02um %02us", dur/86400, dur%86400/3600, dur%3600/60, dur%60);
+      else if(dur>=3600) sprintf(buffer,"%uh %02um %02us", dur/3600, dur%3600/60, dur%60);
+      else sprintf(buffer,"%um %02us", dur/60, dur%60);
+      return {buffer};
+#локализация устройства, скрывается на 10 минут при настройке времени работы девайса, так удобно для инета
+  - platform: template
+    name: ${upper_devicename} Location
+    entity_category: diagnostic
+    id: location
+    icon: 'mdi:map-marker-radius'
+#железо устройства (на основе чего сделано), скрывается на 10 минут при настройке времени работы девайса, так удобно для инета
+  - platform: template
+    name: ${upper_devicename} Hardware
+    entity_category: diagnostic
+    id: hardware
+    icon: 'mdi:saw-blade'
+#точка подключения Wifi
+  - platform: wifi_info
+    ssid:
+      name: ${upper_devicename} Connected SSID
+    bssid:
+      name: ${upper_devicename} Connected BSSID 
+#свободная память      
+  - platform: template
+    name: ${upper_devicename} Free Mem Size
+    entity_category: diagnostic
+    lambda: |-
+      size_t freeValue = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+      char buffer[7];
+      if(freeValue>=1024) sprintf(buffer,"%uKb", freeValue/1024);
+      else sprintf(buffer,"%ub", freeValue);
+      return {buffer};
+            
+script:
+# процедура проверки настроек и уравления климатом
+  - id: script_condition
+    then:
+      lambda: |-
+        if(id(store_auto)){ //если автоматический режим
+           uint16_t _now=(id(cycle).now().hour)*60+id(cycle).now().minute;
+           uint16_t start=id(store_on_time);
+           uint16_t stop=id(store_off_time);
+           //ESP_LOGE("", "start %u, stop %u, _now %u", start, stop, _now);
+           if((start>stop && (_now>=start || _now<=stop)) ||
+              (start<stop && _now>=start && _now<=stop)){
+              if(id(termostate).mode!=CLIMATE_MODE_HEAT) {
+                 ESP_LOGD("This","Start heating on time, %u:%02u.",_now/60,_now%60);
+                 id(script_climat_heat_on).execute();
+              }
+           } else if(id(termostate).mode!=CLIMATE_MODE_OFF){
+              ESP_LOGD("This","Stop heating on time, %u:%02u.",_now/60,_now%60);
+              id(script_climat_heat_off).execute();
+           }
+        }
+# процедура включения термостата на нагрева (проверяем флаг аварии, проверяем текущий режим работы, при необходимости включаем нагрев)
+  - id: script_climat_heat_on
+    then:
+     -  lambda: |-
+          if(id(termostate).mode!=CLIMATE_MODE_HEAT){
+             // включить термостат на нагрев
+             auto call = id(termostate).make_call();
+             call.set_mode("HEAT");
+             call.perform();
+             id(termostate).refresh();
+          } 
+# процедура выключения термостата
+  - id: script_climat_heat_off
+    then:
+     -  lambda: |-
+         if(id(termostate).mode!=CLIMATE_MODE_OFF){
+             auto call = id(termostate).make_call();
+             call.set_mode("OFF");
+             call.perform();
+             id(termostate).refresh();
+          }
+# процедура установки и сохранения времени старта работы термостата
+  - id: script_set_on_time
+    then:
+     - lambda: |-
+          // посчитать значение запуска и сохранить его
+          uint16_t temp=((uint16_t)(id(on_hours).state)*60)+(int16_t)(id(on_minutes).state);
+          id(store_on_time)=temp;
+          // обработать работу термостата
+          id(script_condition).execute();
+# процедура установки и сохранения времени окончании работы термостата
+  - id: script_set_off_time
+    then:
+     - lambda: |-
+          // посчитать значение останова и сохранить его запуска
+          uint16_t temp=((uint16_t)(id(off_hours).state)*60)+(int16_t)(id(off_minutes).state);
+          id(store_off_time)=temp;
+          // обработать работу термостата
+          id(script_condition).execute();
+# процедура обработки переключения режимов кнопки AUTO
+  - id: script_turn_auto
+    then:
+      - lambda: |- 
+          id(script_condition).execute();
+# процедура публикации большых текстовых кусков, сворачиваем для работы в веб морде
+  - id: script_show_text
+    then:
+      - lambda: |-
+          id(location).publish_state("${location}");
+          id(hardware).publish_state("ESP32 custom, RS232 adapter and other.");
+# процедура публикации большых текстовых кусков, сворачиваем для работы в веб морде
+  - id: script_hide_text
+    then:
+      - lambda: |-
+          char buffer[]="Turn 'Hide Notes'";
+          id(location).publish_state(buffer);
+          id(hardware).publish_state(buffer);
+# синхронизация врмени     
+  - id: sync_time
+    then:
+      nmbm8036.write_time
+            
