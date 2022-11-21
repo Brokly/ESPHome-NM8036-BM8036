@@ -49,7 +49,7 @@ esphome:
           if(id(store_auto)){
              temp=id(store_temp_auto);
           }
-          auto call = id(termostate).make_call(); // устанавливаем температуру режима авто
+          auto call = id(termostate).make_call(); // устанавливаем целевую температуру текущего режима
           call.set_target_temperature(temp);
           call.perform();
           id(termostate).refresh();
