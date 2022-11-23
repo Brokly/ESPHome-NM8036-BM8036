@@ -3,7 +3,6 @@
 #ifndef NMBM8036_H
 #define NMBM8036_H
 
-
 #include <Arduino.h>
 #include "esphome.h"
 #include <stdarg.h>
@@ -46,39 +45,33 @@ struct sDallas{                      // структура датчика nm8036
     Sensor*       sensor=nullptr;    // указатель на сенсор ESPHOME для публикации показаний температуры
     TextSensor*   text_sens=nullptr; // указатель на сенсор ESPHOME для публикации серийного номера DALLASa
     int16_t       val=-13000;        // показания сенсора x100
-    bool          change=false;      // флаг изменения показаний, для последующей публикации
+    bool          change=true;       // флаг изменения показаний, для последующей публикации
     bool          isOk=false;        // текущий статус датчика (true - доступен)
-    bool          oldIsOk=false;     // старый статус датчика
     uint8_t       sn[8]={0,0,0,0,0,0,0,0};// серийный номер датчика
-    bool          snCh=false;        // признак необходимости публикации серийного номера
+    bool          snCh=true;        // признак необходимости публикации серийного номера
     float getTemp(){ return (((float)val)/100);} // показания температуры хуман-френдли
 };
     
 struct sChannel{                     // структура состояния выхода nm8036
     BinarySensor*  sensor=nullptr;   // указатель на сенсор ESPHOME для публикации состояния выхода
-    bool           state=false;      // текущее остояние выхода
-    bool           change=false;     // флаг изменения показаний, для последующей публикации
-    bool           targManStatus=false; //целевое состояние на экране ручного управления
     mn8036_Switch* switch_= nullptr;  // наш переключатель
 };
  
 struct sBattery{
     Sensor*       sensor=nullptr;  // показания напряжения батареи
     uint16_t      value=0;         // буфер значения
-    bool          change=false;    // флаг изменения показаний
     float getVolt(){ return (((float)value * 5)/1024);} // показания напряжения батареи
 };    
 
 struct sADC{                       // структура показаний входа nm8036
     Sensor*       sensor=nullptr;  // показания каналов АDC
     uint16_t      value=0;         // буфер значения
-    bool          change=false;    // флаг изменения показаний
+    bool          change=true;    // флаг изменения показаний
 };    
  
 struct sVersion{
     TextSensor*    sensor=nullptr; // версия прошивки устройства
     char*          buff=nullptr;   // указатель на буфер версии
-    bool           change=true;    // флаг изменения данных
 };
  
 struct struct_clock{  // структура данных времени которую передает NM8036
@@ -96,7 +89,7 @@ struct struct_clock{  // структура данных времени кото
     uint8_t AMPM_24_mode:1; // всегда =0
     uint8_t reserved_1:1; // зарезервирован
     // байт №4
-    uint8_t day:3; // День недели (1-7)
+    uint8_t day:3; // День недели (1-7, 1-понедельник)
     uint8_t reserved_2:5;
     // байт №5
     uint8_t date:4; // число (1-31)
@@ -656,12 +649,14 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     // идентифицированый вызов изменения статуса переключателя
     void getStat(bool st, uint8_t num){
        if(O[num].switch_!=nullptr && inter_switch!=nullptr &&  inter_switch->state){
-          setSw(num); //ставим переключатель на обслуживание
-          out_delay=OUT_FAST_DELAY; //пауза между запросами отправки команд к NM8036 в режиме анализа экрана
+          if(O[num].sensor==nullptr || st!=O[num].sensor->state){ // дергаем переключатель только если его состояние не соответствует реальности
+             setSw(num); //ставим переключатель на обслуживание
+             out_delay=OUT_FAST_DELAY; //пауза между запросами отправки команд к NM8036 в режиме анализа экрана
+          }
        }
     }
 
-    // сброс всех свичй
+    // сброс всех свитчей
     void clearSwitchs(){
        for(uint8_t i=0; i<sizeof(O)/sizeof(O[0]); i++){
           if(O[i].switch_!=nullptr && O[i].switch_->state){ // свич инициализирован и включен
@@ -690,14 +685,14 @@ class NMBM8036 : public Sensor, public RealTimeClock {
           else if(num==9) switch_->add_on_state_callback([this](bool st){if(!std::isnan(st)) getStat(st,9);});              
           else if(num==10) switch_->add_on_state_callback([this](bool st){if(!std::isnan(st)) getStat(st,10);});              
           else if(num==11) switch_->add_on_state_callback([this](bool st){if(!std::isnan(st)) getStat(st,11);});              
-          protoFlg|=P_DISP;
+          protoFlg|=P_DISP|P_OUTPUT;
        }
     }
     // подключение переключателя перехвата управления
     void set_hook_switches(mn8036_Switch* switch_){
        static uint8_t oldState=true;
        inter_switch=switch_;
-       protoFlg|=P_DISP;
+       protoFlg|=P_DISP|P_OUTPUT;
        switch_->add_on_state_callback([this](bool st){ // переключение свича захвата управления
             if(!std::isnan(st)){
                if(oldState!=st){ // свитч изменился, все ведомые свичи - отключить
@@ -966,21 +961,17 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                     // ********************* СОСТОЯНИЯ ВЫХОДОВ *************************
                     } else if(in_size==2 && out_buff[0]=='l' ){ // размер правильный, ответ о состоянии выходов
                         _debugMsg(F("%010u: Get status of outputs") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());              
-                        //uint16_t data=*((uint16_t*)in_data);
                         uint16_t data=((uint16_t)in_data[1]<<8) + in_data[0];
                         static bool first_load=true; // флаг первичной загрузки
                         uint16_t mask=(1u<<((sizeof(O)/sizeof(O[0]))-1)); // маска для разбора битовой переменной состояния выходов 11 бит-1 выход, 10 бит-2 выход
                         for(uint8_t i=0;i<sizeof(O)/sizeof(O[0]);i++){
                             bool test=((data&mask)!=0); // определяем состояние бита соответствующего выходу 
-                            if(O[i].state!=test || first_load || O[i].change){ // состояние выхода устройства изменилось или первая загрузка
-                                O[i].state=test; // запомним текущее состояние выхода
-                                if(O[i].sensor!=nullptr){ // ПУБЛИКАЦИЯ
-                                   O[i].change=false; // снимем флаг изменения
-                                   O[i].sensor->publish_state(test);
-                                }
+                            if(O[i].sensor!=nullptr && (O[i].sensor->state!=test || first_load)){ // состояние выхода устройства изменилось или первая загрузка
+                                O[i].sensor->publish_state(test); // устанавливем текущее состояние выхода
                             }
                             mask>>=1; // готовим маску к проверке сл. бита
                         }
+                        first_load=false;
                     // ********************* ДАННЫЕ О СЕРИЙНЫХ НОМЕРАХ *************************
                     } else if(in_size==257 && out_buff[0]=='D'){ // получили данные о серийных номерах датчиков
                         if(in_data[0]=='D'){
@@ -1004,12 +995,9 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                     } else if(in_size==2 && out_buff[0]=='b'){ // размер правильный, ответ о напряжении батарейки
                         _debugMsg(F("%010u: Get battery voltage RTC") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());              
                         uint16_t data=((int16_t)in_data[1]<<8) | in_data[0];
-                        if(Bat.value!=data || Bat.change){ // если изменилось
+                        if(Bat.sensor!=nullptr && Bat.value!=data){ // если изменилось
                             Bat.value=data;
-                            if(Bat.sensor!=nullptr){
-                                Bat.change=false; // флаг принудительной публиковать
-                                Bat.sensor->publish_state(Bat.getVolt());
-                            }
+                            Bat.sensor->publish_state(Bat.getVolt());
                         }
                     // ********************* ВЕРСИЯ ПРОШИВКИ *************************
                     } else if(in_size>2 && out_buff[0]=='V' && in_data[1]+2==in_size){  //размер правильный, ответ о версии
@@ -1068,8 +1056,12 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                                         (uint16_t)2000 + clc->year + 10u * clc->ten_year,
                                         clc->day);
                             if(my_rtc.needSet==false || my_rtc.readTs==0){ // если нет запроса на установку времени или время еще ни разу не считали, структура не инициализирована
-                                my_rtc.readTs=out_last_time+1; // время отправки запроса о показаниях часов + время на обработку   
-                                memcpy(&(my_rtc.clock), &(in_data[1]), sizeof(struct_clock));
+                                if(memcmp(&(my_rtc.clock), &(in_data[1]), sizeof(struct_clock))!=0){ // если время равно, то часы устройства висят, ничего не обновляем)
+                                   my_rtc.readTs=out_last_time+1; // время отправки запроса о показаниях часов + время на обработку   
+                                   memcpy(&(my_rtc.clock), &(in_data[1]), sizeof(struct_clock));
+                                } else {
+                                   _debugMsg(F("%010u Inbound RTC freze !!!!"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                                }
                             }
                         } else {
                             uart_error=ER_REPLY; // ошибка признака ответа 
