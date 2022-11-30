@@ -929,6 +929,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                 if(in_size==0 && in_data[0]!='K' && in_data[0]!='c'){ // ничего не получили, хотя отправили команду
                     uart_error=NO_REPLY; // нет ответа
                     _debugMsg(F("%010u: No reply from NM8036."), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                    set_pin_state(true);
                 } else { // получен пакет, поняли по таймауту
                     _debugPrintPacket(in_data, in_size, true,ESPHOME_LOG_LEVEL_DEBUG,__LINE__); // отладочная печать пакета
                     // ********************* ПОКАЗВНИЯ ДАТЧИКОВ ТЕМПЕРАТУРЫ *************************
@@ -968,6 +969,11 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                             bool test=((data&mask)!=0); // определяем состояние бита соответствующего выходу 
                             if(O[i].sensor!=nullptr && (O[i].sensor->state!=test || first_load)){ // состояние выхода устройства изменилось или первая загрузка
                                 O[i].sensor->publish_state(test); // устанавливем текущее состояние выхода
+                            }
+                            if(inter_switch!=nullptr && inter_switch->state){ // если перехват управления включен
+                               if(O[i].switch_!=nullptr && O[i].switch_->state!=test){ // проверяем состояние свитчей, если отличается
+                                  setSw(i); //ставим переключатель на обслуживание                                   
+                               }
                             }
                             mask>>=1; // готовим маску к проверке сл. бита
                         }
@@ -1112,7 +1118,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                               set_one_key(KEY_MENU); // жмем меню, для выхода
                            } else if(inter_switch!=nullptr && inter_switch->state){ // перехват управления включен
                               if(deep==MENU_UNDEF){ // если рабочая страница - нажимаем кнопку меню, для входа в меню
-                                 set_one_key(KEY_MENU); // жмем меню, для выхода 
+                                 set_one_key(KEY_MENU); // жмем меню, для выхода
                               } else if(deep==MENU_FIRST){ // первый уровень меню   
                                 if(pos==POS_CLOCK_SET || pos==POS_PROGR_SET || pos==POS_FIND_MEAS || pos==POS_PARAMS || pos==POS_ADC || pos==POS_OUT){
                                    set_one_key(KEY_ARR_DN);
@@ -1138,7 +1144,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                                          } else { // если состояние выхода правильное
                                             if(availableSw()){ // в очереди еще есть свичи требующие изменения
                                                targetManualOut=getSw(); // актуализировать
-                                            } else {
+                                            } else { // в очереди нет свитчей
                                                out_delay=OUT_DELAY; //пауза между запросами отправки команд к NM8036 в нормальный режим
                                             }                                                
                                           }
