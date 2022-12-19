@@ -28,15 +28,15 @@ using time::RealTimeClock;
 using uart::UARTDevice;  
 using uart::UARTComponent;
 
-typedef void(*on_switch_status)(bool); // тип обратного вызова для свичей
-
 class NMBM8036;
 
 class mn8036_Switch : public switch_::Switch, public Component, public esphome::Parented<NMBM8036> {
  protected:
    void write_state(bool state) override { 
-      this->publish_state(state); 
-      this->state_callback_.call(state);
+      if(this->state!=state){
+         this->publish_state(state); 
+         this->state_callback_.call(state);
+      }
     }
  friend class NMBM8036;   
 };
@@ -55,6 +55,13 @@ struct sDallas{                      // структура датчика nm8036
 struct sChannel{                     // структура состояния выхода nm8036
     BinarySensor*  sensor=nullptr;   // указатель на сенсор ESPHOME для публикации состояния выхода
     mn8036_Switch* switch_= nullptr;  // наш переключатель
+    bool        firstLoad = true;  // флаг - еще не публиковали
+    void setSensor(bool state){
+       if(sensor!=nullptr && (sensor->state!=state || firstLoad)){ // состояние выхода устройства изменилось или первая загрузка
+          firstLoad=false; // флаг первичной загрузки
+          sensor->publish_state(state); // устанавливем текущее состояние выхода
+       }
+    }
 };
  
 struct sBattery{
@@ -207,11 +214,11 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     uint8_t posS=0; // позиция команды чтения экрана, для ускорения во время работы с клавой
     // V b - версия и батарейка всегда на первом месте
     #define P_DISP    0x0001 // будем читать дисплй d + S часто
-    #define P_T_STAT  0x0002 // будем читать статусы датчиков v
-    #define P_T_VAL   0x0004 // будем читать показания датчиков t
-    #define P_T_SER   0x0008 // будем читать серийные номера датчиков D
-    #define P_INPUT   0x0010 // будем читать состояния аналоговых входов s
-    #define P_OUTPUT  0x0020 // будем читать состояния выходов l
+    #define P_OUTPUT  0x0002 // будем читать состояния выходов l
+    #define P_T_STAT  0x0004 // будем читать статусы датчиков v
+    #define P_T_VAL   0x0008 // будем читать показания датчиков t
+    #define P_T_SER   0x0010 // будем читать серийные номера датчиков D
+    #define P_INPUT   0x0020 // будем читать состояния аналоговых входов s
     #define P_TIME    0x0040 // чтение часов устройства с 
     uint16_t protoFlg=P_TIME; // буфер флагов протокола для построения, время читаем всегда
     uint32_t out_last_time=0; // время отправки последнего байта к nm8036
@@ -330,7 +337,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
        uint16_t buff=protoFlg;
        bool disp=(buff & 1); // признак чтения дисплея
        buff>>=1;
-       const char tbl[]="vtDslc";
+       const char tbl[]="vltDsc";
        // считаем нужный размер буфера команд
        while(buff){
           if(buff & 1){
@@ -399,7 +406,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
           else if(*addr==0x00000E0A0A0A0E00) ret[0]='0';
           else if(*addr==0x00080C1E1F1E0C08) ret[0]='>';
           else {
-             ESP_LOGE("","Unexpected string line :%u 0x%08X%08X", i, *(((uint32_t*)addr+1)),*((uint32_t*)addr));
+             ESP_LOGE(TAG,"Unexpected string line :%u 0x%08X%08X", i, *(((uint32_t*)addr+1)),*((uint32_t*)addr));
           }
        }
        return ret;
@@ -501,7 +508,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
           out+=",";
           temp=(temp+1)&0xF;
        }
-       ESP_LOGE("DEBUG",out.c_str());
+       //ESP_LOGD(TAG,out.c_str());
     }
     
     // постановка кода кнопки для отправки в буфер
@@ -511,7 +518,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
            keyBuff[keyBuffIn]=key;
            key_ok=false; //в буфере есть данные для отправки
            keyBuffIn=temp;
-           ESP_LOGD("","Set key in buff for send: %u",key); 
+           ESP_LOGD(TAG,"Set key in buff for send: %u",key); 
            //printKeyBuff();           
            return true;
         }
@@ -524,7 +531,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
         if(keyBuffIn != keyBuffOut){
            uint8_t temp=keyBuff[keyBuffOut];
            keyBuffOut=(keyBuffOut+1)&0xF;
-           ESP_LOGD("","Get key from buff for send: %u",temp);            
+           ESP_LOGD(TAG,"Get key from buff for send: %u",temp);            
            //printKeyBuff();           
            return temp;      
         }
@@ -538,8 +545,11 @@ class NMBM8036 : public Sensor, public RealTimeClock {
 
     // установка кнопки только при пустом буфере
     bool set_one_key(uint8_t val){   
-       if(key_ok){ // кнопок в буфере нет
-           //ESP_LOGD("","Set key for send: %u",val);            
+       static uint32_t break_timer=0;
+       uint32_t now=millis();
+       if(key_ok || now-break_timer>2000){ // кнопок в буфере нет или ждем долго
+           break_timer=now;
+           ESP_LOGD(TAG,"Set key for send: %u",val);            
            setKey(val);
            send_counter=posS; //ускорение чтение дисплея           
            out_delay=OUT_FAST_DELAY; // усорение обмена данными
@@ -557,13 +567,13 @@ class NMBM8036 : public Sensor, public RealTimeClock {
           out+=",";
           temp=(temp+1)&0xF;
        }
-       ESP_LOGE("DEBUG",out.c_str());
+       //ESP_LOGD("DEBUG",out.c_str());
     }
 
     // очередь изменения номеров входов, требующая обслуживания
     // добавление номера входов 0...11, флаг состояния в старшем бите
     bool setSw(uint8_t num){
-        //ESP_LOGD("","Set switch number %u to target, from buffer",num);            
+        ESP_LOGD(TAG,"Set switch number %u to target, from buffer",num);            
         uint8_t temp=swBuffOut; // первый байт в кольцевом буфере
         while(swBuffIn != temp){ // ищем нужный номер свитча
            if(swBuff[temp] == num){ // нашли !
@@ -585,7 +595,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
         if(swBuffIn != swBuffOut){
            uint8_t num=swBuff[swBuffOut];
            swBuffOut=(swBuffOut+1)&0xF;
-           //ESP_LOGD("","Get switch number %u, for set to target",num);            
+           //ESP_LOGD(TAG,"Get switch number %u, for set to target",num);            
            return num;      
         }
         return -1; // в буфере ничего нет
@@ -690,18 +700,19 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     }
     // подключение переключателя перехвата управления
     void set_hook_switches(mn8036_Switch* switch_){
-       static uint8_t oldState=true;
+       static bool oldState=true;
        inter_switch=switch_;
        protoFlg|=P_DISP|P_OUTPUT;
-       switch_->add_on_state_callback([this](bool st){ // переключение свича захвата управления
+       switch_->add_on_state_callback([this](bool st){ 
+            // обработка переключения свича захвата управления
             if(!std::isnan(st)){
                if(oldState!=st){ // свитч изменился, все ведомые свичи - отключить
-                  oldState=st;  
-                  clearSwitchs();                  
+                  oldState=st; 
+                  if(st==false){
+                     clearSwitchs();
+                  }                     
                }
-               if(inter_switch!=nullptr){
-                  inter_switch->publish_state(st); 
-               }
+               inter_switch->publish_state(st); 
                if(st){ // свитч активирован 
                   out_delay=OUT_FAST_DELAY; //пауза между запросами отправки команд к NM8036 в режиме анализа экрана
                } 
@@ -793,6 +804,10 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     void setup() override{
        createComm(); // построить буфер команд    
        setKey(KEY_MENU); // на всякий случай для сброса устройства
+       //if(inter_switch==nullptr || inter_switch->state){ // если включен перехват управления
+       //   inter_switch->state=false;
+       //}
+       //clearSwitchs(); // сбросить все свитчи
     }  
     
     // берем время из BM8036
@@ -928,7 +943,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                 uart_error=_OK; // временно установим статус все норм
                 if(in_size==0 && in_data[0]!='K' && in_data[0]!='c'){ // ничего не получили, хотя отправили команду
                     uart_error=NO_REPLY; // нет ответа
-                    _debugMsg(F("%010u: No reply from NM8036."), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                    //_debugMsg(F("%010u: No reply from NM8036."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());
                     set_pin_state(true);
                 } else { // получен пакет, поняли по таймауту
                     _debugPrintPacket(in_data, in_size, true,ESPHOME_LOG_LEVEL_DEBUG,__LINE__); // отладочная печать пакета
@@ -961,15 +976,12 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                         }
                     // ********************* СОСТОЯНИЯ ВЫХОДОВ *************************
                     } else if(in_size==2 && out_buff[0]=='l' ){ // размер правильный, ответ о состоянии выходов
-                        _debugMsg(F("%010u: Get status of outputs") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());              
-                        uint16_t data=((uint16_t)in_data[1]<<8) + in_data[0];
-                        static bool first_load=true; // флаг первичной загрузки
+                        _debugMsg(F("%010u: Get status of outputs") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());     
+                        uint16_t data=(((uint16_t)in_data[1]<<8) + in_data[0]) & 0xFFF;
                         uint16_t mask=(1u<<((sizeof(O)/sizeof(O[0]))-1)); // маска для разбора битовой переменной состояния выходов 11 бит-1 выход, 10 бит-2 выход
                         for(uint8_t i=0;i<sizeof(O)/sizeof(O[0]);i++){
                             bool test=((data&mask)!=0); // определяем состояние бита соответствующего выходу 
-                            if(O[i].sensor!=nullptr && (O[i].sensor->state!=test || first_load)){ // состояние выхода устройства изменилось или первая загрузка
-                                O[i].sensor->publish_state(test); // устанавливем текущее состояние выхода
-                            }
+                            O[i].setSensor(test); // устанавливем текущее состояние выхода
                             if(inter_switch!=nullptr && inter_switch->state){ // если перехват управления включен
                                if(O[i].switch_!=nullptr && O[i].switch_->state!=test){ // проверяем состояние свитчей, если отличается
                                   setSw(i); //ставим переключатель на обслуживание                                   
@@ -977,7 +989,6 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                             }
                             mask>>=1; // готовим маску к проверке сл. бита
                         }
-                        first_load=false;
                     // ********************* ДАННЫЕ О СЕРИЙНЫХ НОМЕРАХ *************************
                     } else if(in_size==257 && out_buff[0]=='D'){ // получили данные о серийных номерах датчиков
                         if(in_data[0]=='D'){
@@ -1108,9 +1119,9 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                                  displ2->publish_state(strUni(temp));
                               }
                            }
-                           //ESP_LOGE("",strUni(dispStr1));
-                           //ESP_LOGE("",strUni(dispStr2));
-                           //ESP_LOGE("",strUni(currLine));
+                           //ESP_LOGD(TAG,strUni(dispStr1));
+                           //ESP_LOGD(TAG,strUni(dispStr2));
+                           //ESP_LOGD(TAG,strUni(currLine));
                            uint8_t deep=0;
                            uint8_t pos=0;
                            getScrPos(&deep, &pos); // опознать состояние дисплея
@@ -1131,17 +1142,15 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                                 }
                               } else if(deep==MENU_MANUAL){ // уже в манульном режиме  
                                 uint8_t i=pos-POS_MANUAL_1; // детектированный номер переключателя 
-                                if(targetManualOut>i){ // движение к требуемой строке
-                                   set_one_key(KEY_ARR_DN);   
-                                } else if(targetManualOut<i){
-                                   set_one_key(KEY_ARR_UP); 
-                                } else if(targetManualOut==i){ // выбрана нужная строка
+
+                                if(targetManualOut==i){ // выбрана нужная строка
                                    if(i<sizeof(O)/sizeof(O[0])){ // номер в диапазоне
                                       if(O[i].switch_!=nullptr){ // свич инициализирован
                                          bool val=(currLine[14]=='1'); // состояние выхода на экране
                                          if(O[i].switch_->state != val){ // если не равно
                                             set_one_key(KEY_ENTER); // изменяем состояние выхода под требуемое    
                                          } else { // если состояние выхода правильное
+                                            O[i].setSensor(val); // устанавливем текущее состояние выхода
                                             if(availableSw()){ // в очереди еще есть свичи требующие изменения
                                                targetManualOut=getSw(); // актуализировать
                                             } else { // в очереди нет свитчей
@@ -1150,8 +1159,20 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                                           }
                                       }                                         
                                    }
-                                } else { // при ошибке выйти из меню
-                                   set_one_key(KEY_MENU);
+                                } else {
+                                   // правим выходы при читении из ручного меню 
+                                   uint8_t testChar=currLine[14];
+                                   if(testChar=='0' || testChar=='1'){
+                                      bool val=(currLine[14]=='1'); // состояние выхода на экране
+                                      O[i].setSensor(val); // устанавливем текущее состояние выхода
+                                   }
+                                   if(targetManualOut>i){ // движение к требуемой строке
+                                      set_one_key(KEY_ARR_DN);   
+                                   } else if(targetManualOut<i){
+                                      set_one_key(KEY_ARR_UP); 
+                                   } else { // при ошибке выйти из меню
+                                      set_one_key(KEY_MENU);
+                                   }
                                 }
                               }                              
                            } else if(deep==MENU_UNDEF){
@@ -1236,10 +1257,25 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                         #endif
                     } 
                 }
+                static uint8_t err_cnt=0;
+                static uint8_t old=-1;
                 if(oldError==_OK){
+                    err_cnt=0;
                     _debugMsg(F("%010u: No errors !"), ESPHOME_LOG_LEVEL_INFO, __LINE__, millis());
+                    if(error_string!=nullptr && old!=uart_error){
+                       old=uart_error;
+                       error_string->publish_state(getStrError(uart_error));
+                   }
                 } else {
-                    _debugMsg(F("%010u: Error: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), getStrError(oldError));
+                    if(err_cnt>4){
+                       _debugMsg(F("%010u: Error: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), getStrError(oldError));
+                       if(error_string!=nullptr && old!=uart_error){
+                          old=uart_error;
+                          error_string->publish_state(getStrError(uart_error));
+                       }
+                    } else {
+                       err_cnt++;   
+                    }                        
                 }
             }
 
