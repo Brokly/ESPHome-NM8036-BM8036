@@ -131,13 +131,14 @@ enum _errType:uint8_t { _OK=0,        // ошибок нет
                         ER_START ,    // значение отличное от остальных, для старта
                         ER_REBOOT,    // перезагруза по ошибке
                         ER_UART_INIT, // в ямле не прописан UART
-                        ER_FREEZE     // внешний девайс висит
+                        ER_FREEZE,    // внешний девайс висит
+                        ER_UNDEF      // неизвестное состояние
 };
 
 #define IN_BUFF_SIZE 512      // размер входного буфера
 #define OUT_BUFF_SIZE 32      // размер выходного буфера
-#define REPLY_TIMEOUT 1000     // mS максимальный таймаут ожидания начала ответа от NM8036 
-#define IN_BYTE_TIMEOUT 100    // 60mS максимальный таймаут между ожиданием байтов при ответе от NM8036 
+#define REPLY_TIMEOUT 1000    // mS максимальный таймаут ожидания начала ответа от NM8036 
+#define IN_BYTE_TIMEOUT 120   // 120mS максимальный таймаут между ожиданием байтов при ответе от NM8036 
 #define OUT_DELAY  2000       // mS пауза между запросами отправки команд к NM8036 в нормальном режиме
 #define OUT_FAST_DELAY  100   // пауза между запросами отправки команд к NM8036 в режиме ручного управления
 #define SLOW_SERIAL_DELAY 5   // 5 mS задержка между байтами при медленной отправке
@@ -204,7 +205,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     UARTComponent *my_serial{nullptr};// указатель на UART для подключения к устройству
     TextSensor *error_string {nullptr}; // состояние канала связи RS232 текстовая рашифровка
     uint8_t error_count=0; // счетчик последовательных ошибок, для перезагрузки
-    _errType uart_error=_OK; //состояние канала связи RS232  
+    _errType uart_error=ER_UNDEF; //состояние канала связи RS232  
     GPIOPin* signal_led{nullptr}; // нога с сигнальным диодом
     bool oldPinState = false; // текущее состояние светодиода статуса
     // переменные для организации трафика к устройсву
@@ -259,6 +260,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
     //          Для нормального пакета данные выводятся с форматированием. 
     // line - строка, на которой произошел вызов (удобно при отладке)
     //
+    #define CUT_DATA 10  // раскоментировать дефайн, для сокращения вывода данных, цифра- максимальное количество байт пакета для показа
     void _debugPrintPacket(uint8_t* data, uint16_t size, bool in, uint8_t dbgLevel = ESPHOME_LOG_LEVEL_DEBUG, unsigned int line = 0){
         String st = "";
         char textBuf[11];
@@ -272,12 +274,21 @@ class NMBM8036 : public Sensor, public RealTimeClock {
         } else {
             st += "[=>] ";      // признак исходящего пакета
         } 
+      #ifdef CUT_DATA
+        for (uint16_t i=0; i<size && i<CUT_DATA; i++){ // так сокращаем данные
+      #else
         for (uint16_t i=0; i<size; i++){
+      #endif      
             memset(textBuf, 0, 11);
             sprintf(textBuf, "%02X", data[i]);
             st += textBuf;
             st +=' ';
         }
+      #ifdef CUT_DATA
+        if(size>CUT_DATA){
+           st+= "...";
+        }
+      #endif
         if (line == 0) line = __LINE__;
         _debugMsg(st, dbgLevel, line);
     }
@@ -396,6 +407,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
           else if(*addr==0x001F111D1117111F) ret[0]='5';
           else if(*addr==0x00000E020E080E00) ret[0]='5';
           else if(*addr==0x001F11151117111F) ret[0]='6';
+          else if(*addr==0x00000E0A0E080E00) ret[0]='6'; //21.10.23
           else if(*addr==0x001F1D1D1D1D111F) ret[0]='7';
           else if(*addr==0x0000020202020E00) ret[0]='7';
           else if(*addr==0x001F11151115111F) ret[0]='8';
@@ -816,7 +828,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
             return;
         }
         const uint8_t day_core[]={0, 2,3,4,5,6,7,1}; // счет 1..7, у нас воскр-7, у них воскр-1
-        time::ESPTime rtc_time{.second        = (uint8_t)(10u * my_rtc.clock.ten_seconds + my_rtc.clock.seconds), 
+        esphome::ESPTime rtc_time{.second        = (uint8_t)(10u * my_rtc.clock.ten_seconds + my_rtc.clock.seconds), 
                                .minute       = (uint8_t)(10u * my_rtc.clock.ten_minutes + my_rtc.clock.minutes),
                                .hour         = (uint8_t)(10u * my_rtc.clock.ten_hours + my_rtc.clock.hours), 
                                .day_of_week  = (uint8_t)(day_core[my_rtc.clock.day]),
@@ -928,6 +940,7 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                        send_counter=0;   
                     }
                     _debugPrintPacket(out_buff , out_size, false,ESPHOME_LOG_LEVEL_DEBUG,__LINE__); // отладочная печать буфера отправки данных
+                    
                 }      
             }
         }
@@ -1064,20 +1077,48 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                     } else if(in_size==sizeof(struct_clock)+1 && out_buff[0]=='c' ){ // размер правильный, ответ о времени
                         if( in_data[0]=='c'){
                             struct_clock* clc = (struct_clock*)(&(in_data[1]));
+                            // восстанавливаем данные считанные с внутренних часов 8036
+                            uint8_t _hours  =  clc->hours   + 10u * clc->ten_hours;
+                            uint8_t _minutes=  clc->minutes + 10u * clc->ten_minutes;
+                            uint8_t _seconds=  clc->seconds + 10u * clc->ten_seconds;
+                            uint8_t _date   =  clc->date    + 10u * clc->ten_date;
+                            uint8_t _month  =  clc->month   + 10u * clc->ten_month;
+                            uint16_t _year  =  (uint16_t)2000 + clc->year + 10u * clc->ten_year;
                             _debugMsg(F("%010u Get clock data from device RTC: %u:%02u:%02u %u/%02u/%u, day of week %u"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),
-                                        clc->hours   + 10u * clc->ten_hours,
-                                        clc->minutes + 10u * clc->ten_minutes,
-                                        clc->seconds + 10  * clc->ten_seconds,
-                                        clc->date    + 10u * clc->ten_date,
-                                        clc->month   + 10u * clc->ten_month,
-                                        (uint16_t)2000 + clc->year + 10u * clc->ten_year,
-                                        clc->day);
+                                        _hours, _minutes, _seconds, _date, _month, _year, clc->day);
+                            auto now = time::RealTimeClock::now(); // показания внутренних часов контролера
+                            if (!now.is_valid()) { // если время еще ни разу не синхронизировано, то ничего не делаем
+                               _debugMsg(F("%010u: Invalid system time, not checking valid device RTC time."), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                            } else { // сравниваем время считанное и контролера
+                               _debugMsg(F("%010u:   Current   clock     data   : %u:%02u:%02u %u/%02u/%u"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),
+                                        now.hour, now.minute, now.second, now.day_of_month, now.month, now.year);
+                               static uint8_t control=0; // счетчик несовпадений времени 
+                               if( now.year         !=    _year ||
+                                   now.month        !=    _month ||
+                                   now.day_of_month !=    _date ||
+                                   now.hour         !=    _hours ||
+                                   now.minute       !=    _minutes ){ //если данные времени не совпали
+                                  if(control==1){ // если дважды получили несовадение времени
+                                     control=0; // сбрасываем счетчик
+                                     my_rtc.needSet=true; // поднимаем флаг необходимости синхронизации                                   
+                                     _debugMsg(F("%010u Set sync time flag."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                                  } else {
+                                     control++;
+                                     _debugMsg(F("%010u Device RTC time ERROR: %u."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis(),control);
+                                  }
+                               } else { // если показания времени совпали, то синхронизация не нужна
+                                  _debugMsg(F("%010u Device RTC time OK, sync not need."), ESPHOME_LOG_LEVEL_DEBUG, __LINE__,millis());
+                                  control=0;
+                               }
+                            }                         
                             if(my_rtc.needSet==false || my_rtc.readTs==0){ // если нет запроса на установку времени или время еще ни разу не считали, структура не инициализирована
                                 if(memcmp(&(my_rtc.clock), &(in_data[1]), sizeof(struct_clock))!=0){ // если время равно, то часы устройства висят, ничего не обновляем)
                                    my_rtc.readTs=out_last_time+1; // время отправки запроса о показаниях часов + время на обработку   
                                    memcpy(&(my_rtc.clock), &(in_data[1]), sizeof(struct_clock));
                                 } else {
-                                   _debugMsg(F("%010u Inbound RTC freze !!!!"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                                   _debugMsg(F("%010u Inbound RTC freeze !!!!"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis());
+                                   my_rtc.needSet=true; // реально время установится когда возможно будет передать пакет устройству
+                                   _debugMsg(F("%010u: Set job 'write_time', for RTC unfreeze"), ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis());
                                 }
                             }
                         } else {
@@ -1191,15 +1232,20 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                         } else {
                            uart_error=ER_SIZE; // ошибка размера ответа 
                         }
+                    } else {
+                        uart_error=ER_REPLY;   
                     }
                     in_size=0; // очистим буфер приема пакета
                 }
                 if(uart_error==_OK){ // считаем ошибки связи
+                    if(error_count>0){
+                       _debugMsg(F("%010u: Communication OK") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis()); 
+                       error_count=0;
+                    }
                     freeze_controll_timer=millis();   // контроль зависания
-                    error_count=0;
                 } else {
                     error_count++;
-                    _debugMsg(F("%010u: Сommunication error: %s") , ESPHOME_LOG_LEVEL_DEBUG, __LINE__, millis(),  getStrError(uart_error)); 
+                    _debugMsg(F("%010u: Communication error: %s") , ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(),  getStrError(uart_error)); 
                     my_serial->flush();
                 }
                 in_last_time=0; // отключим ожидание пакета
@@ -1209,6 +1255,11 @@ class NMBM8036 : public Sensor, public RealTimeClock {
         // раз таймер не 0, значит читаем дисплей, позиция экрана не ручное управление выходами, таймаут истек
         if(freeze_controll_timer && millis()-freeze_controll_timer>TIMEOUT_FREEZE){
            uart_error=ER_FREEZE; // внешнее устройство висит
+           //21.10.23 Эксперемент отправим X в попытке перезапустить устройство
+           uint8_t buff[2]={'X','X'};
+           sendSerialData(buff, 2, SLOW_SERIAL_DELAY); // отправляем X, дважды - выход из режима программирования
+           ESP_LOGE(TAG,"Send X for reset !!!!");
+           freeze_controll_timer=millis();
            //uint8_t buff[2]={'K',KEY_MENU};
            //sendSerialData(buff, 2, SLOW_SERIAL_DELAY); // отправляем код клавиши 
            //ESP_LOGD(TAG,"Send key for unfreze 0x%02X",buff[1]);
@@ -1237,25 +1288,25 @@ class NMBM8036 : public Sensor, public RealTimeClock {
             }
 
             // контролируем ошибки связи и момент их возникновения
-            static _errType oldError = _OK; 
+            static _errType oldError = ER_UNDEF; 
             if(oldError != uart_error){ //если изменился статус ошибки
                 oldError = uart_error;  // запомним новый статус
                 if(error_string!=nullptr){ // публикация ошибок
                     // ОБРАБОТКА ГЛОБАЛЬНОЙ ОШИБКИ СВЯЗИ
-                    if(error_count>REBOOT_ERROR_COUNT){ // перезагрузка из-за ошибок связи с mn8036
-                        error_string->publish_state(getStrError(ER_REBOOT));
-                        _debugMsg(F("%010u: Error: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), getStrError(ER_REBOOT));
-                        delay(10000);
-                        if(my_serial!=nullptr){
-                            my_serial->flush();
-                        }
-                        #ifdef ESP32
-                            esp_sleep_enable_timer_wakeup(1000000UL * 30);  //глубокий сон 30 секунд
-                            esp_deep_sleep_start();
-                        #else
-                            ESP.restart(); 
-                        #endif
-                    } 
+                    //if(error_count>REBOOT_ERROR_COUNT){ // перезагрузка из-за ошибок связи с mn8036
+                    //    error_string->publish_state(getStrError(ER_REBOOT));
+                    //    _debugMsg(F("%010u: Error: %s"), ESPHOME_LOG_LEVEL_ERROR, __LINE__, millis(), getStrError(ER_REBOOT));
+                    //    delay(10000);
+                    //    if(my_serial!=nullptr){
+                    //        my_serial->flush();
+                    //    }
+                    //    #ifdef ESP32
+                    //        esp_sleep_enable_timer_wakeup(1000000UL * 30);  //глубокий сон 30 секунд
+                    //        esp_deep_sleep_start();
+                    //    #else
+                    //        ESP.restart(); 
+                    //    #endif
+                    //} 
                 }
                 static uint8_t err_cnt=0;
                 static uint8_t old=-1;
@@ -1278,15 +1329,6 @@ class NMBM8036 : public Sensor, public RealTimeClock {
                     }                        
                 }
             }
-
-            if(error_string!=nullptr){
-               static uint8_t old=-1;
-               if(old!=uart_error){
-                  old=uart_error;
-                  error_string->publish_state(getStrError(uart_error));
-               }
-            }
-            
         }
     }
         
