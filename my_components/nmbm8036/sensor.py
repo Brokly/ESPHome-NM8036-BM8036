@@ -30,7 +30,7 @@ CONF_DALLAS_ADDRESS = "ds_address_"
 ICON_DALLAS_SERIAL = "mdi:numeric"
 CONF_OUTPUT = "output_"
 ICON_OUTPUT = "mdi:electric-switch"
-CONF_INPUT = "input_"
+CONF_INPUT = "ADC_"
 ICON_INPUT = "mdi:gauge"
 CONF_BATTERY = "rtc_battery_voltage"
 ICON_BATTERY = "mdi:battery-clock-outline"
@@ -125,7 +125,9 @@ for number in range(12):
         icon=ICON_8036_SWITCH,
     )
     
-CONFIG_SCHEMA = cv.All(sensor.SENSOR_SCHEMA.extend(initParams).extend(time.TIME_SCHEMA).extend(uart.UART_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA), output_info)
+CONFIG_SCHEMA = cv.All(sensor.sensor_schema(sensor.Sensor).extend(initParams).extend(time.TIME_SCHEMA).extend(uart.UART_DEVICE_SCHEMA).extend(cv.COMPONENT_SCHEMA), output_info)
+
+sensor.sensor_schema(sensor.Sensor)
 
 @automation.register_action(
     "nmbm8036.write_time",
